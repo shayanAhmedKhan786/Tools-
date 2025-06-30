@@ -6,6 +6,8 @@
     <meta name="description" content="Merge multiple PDF files into one document online for free. No registration required. Secure and easy to use.">
     <title>PDF Merger - Combine PDF Files Online | ToolKitPro</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://unpkg.com/downloadjs@1.4.7"></script>
     <style>
         :root {
             --primary: #4361ee;
@@ -343,6 +345,33 @@
             100% { transform: rotate(360deg); }
         }
 
+        /* Status Message */
+        .status {
+            margin: 1rem 0;
+            padding: 1rem;
+            border-radius: 5px;
+            text-align: center;
+            display: none;
+        }
+
+        .status.success {
+            background-color: rgba(76, 201, 240, 0.1);
+            color: var(--success);
+            display: block;
+        }
+
+        .status.error {
+            background-color: rgba(247, 37, 133, 0.1);
+            color: var(--danger);
+            display: block;
+        }
+
+        .status.info {
+            background-color: rgba(72, 149, 239, 0.1);
+            color: var(--accent);
+            display: block;
+        }
+
         /* How It Works */
         .how-it-works {
             margin: 3rem 0;
@@ -616,6 +645,9 @@
             <!-- Loading Spinner -->
             <div class="spinner" id="spinner"></div>
 
+            <!-- Status Message -->
+            <div class="status" id="status-message"></div>
+
             <!-- Results Section -->
             <div class="results" id="results">
                 <div class="result-icon">
@@ -770,12 +802,14 @@
         const clearBtn = document.getElementById('clear-btn');
         const resultsSection = document.getElementById('results');
         const spinner = document.getElementById('spinner');
+        const statusMessage = document.getElementById('status-message');
         const downloadBtn = document.getElementById('download-btn');
         const mobileMenuBtn = document.getElementById('mobile-menu-btn');
         const navLinks = document.getElementById('nav-links');
         
         // Variables to store files
-        let files = [];
+        let pdfFiles = [];
+        let mergedPdfBlob = null;
         
         // Event Listeners
         uploadArea.addEventListener('click', () => fileInput.click());
@@ -822,41 +856,61 @@
         });
         
         // Functions
-        function handleFiles(newFiles) {
+        async function handleFiles(newFiles) {
             // Convert FileList to array and filter for PDFs
             const newFilesArray = Array.from(newFiles).filter(file => file.type === 'application/pdf');
             
+            if (newFilesArray.length === 0) {
+                showStatus('Please select PDF files only', 'error');
+                return;
+            }
+            
             // Check if adding these files would exceed limit
-            if (files.length + newFilesArray.length > 20) {
-                alert('You can merge a maximum of 20 PDFs at once. Please select fewer files.');
+            if (pdfFiles.length + newFilesArray.length > 20) {
+                showStatus('Maximum 20 PDFs can be merged at once', 'error');
                 return;
             }
             
             // Check file sizes
             for (const file of newFilesArray) {
                 if (file.size > 50 * 1024 * 1024) { // 50MB
-                    alert(`The file "${file.name}" is too large. Maximum file size is 50MB.`);
+                    showStatus(`The file "${file.name}" is too large. Maximum file size is 50MB.`, 'error');
                     return;
                 }
             }
             
-            // Add new files to our array
-            files = [...files, ...newFilesArray];
+            // Add new files
+            for (const file of newFilesArray) {
+                try {
+                    // Read each file as ArrayBuffer
+                    const arrayBuffer = await file.arrayBuffer();
+                    pdfFiles.push({
+                        name: file.name,
+                        size: file.size,
+                        arrayBuffer: arrayBuffer
+                    });
+                } catch (err) {
+                    console.error('Error reading file:', err);
+                    showStatus(`Error reading ${file.name}`, 'error');
+                    return;
+                }
+            }
             
             // Update UI
             renderFileList();
             updateMergeButton();
             
             // Show file list if not already visible
-            if (files.length > 0) {
+            if (pdfFiles.length > 0) {
                 fileList.style.display = 'block';
             }
         }
         
+        // Update the file list UI
         function renderFileList() {
             fileListItems.innerHTML = '';
             
-            files.forEach((file, index) => {
+            pdfFiles.forEach((file, index) => {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
                 fileItem.draggable = true;
@@ -900,7 +954,7 @@
             document.querySelectorAll('.move-down').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     const index = parseInt(e.target.closest('.file-item').dataset.index);
-                    if (index < files.length - 1) {
+                    if (index < pdfFiles.length - 1) {
                         moveFileDown(index);
                     }
                 });
@@ -917,27 +971,28 @@
         }
         
         function removeFile(index) {
-            files.splice(index, 1);
+            pdfFiles.splice(index, 1);
             renderFileList();
             updateMergeButton();
             
-            if (files.length === 0) {
+            if (pdfFiles.length === 0) {
                 fileList.style.display = 'none';
+                resultsSection.style.display = 'none';
             }
         }
         
         function moveFileUp(index) {
-            [files[index], files[index - 1]] = [files[index - 1], files[index]];
+            [pdfFiles[index], pdfFiles[index - 1]] = [pdfFiles[index - 1], pdfFiles[index]];
             renderFileList();
         }
         
         function moveFileDown(index) {
-            [files[index], files[index + 1]] = [files[index + 1], files[index]];
+            [pdfFiles[index], pdfFiles[index + 1]] = [pdfFiles[index + 1], pdfFiles[index]];
             renderFileList();
         }
         
         function updateMergeButton() {
-            if (files.length >= 2) {
+            if (pdfFiles.length >= 2) {
                 mergeBtn.disabled = false;
                 mergeBtn.classList.remove('btn-disabled');
             } else {
@@ -947,34 +1002,69 @@
         }
         
         function resetTool() {
-            files = [];
+            pdfFiles = [];
             fileInput.value = '';
             fileList.style.display = 'none';
             resultsSection.style.display = 'none';
+            statusMessage.style.display = 'none';
             updateMergeButton();
         }
         
-        function mergePDFs() {
-            if (files.length < 2) return;
+        async function mergePDFs() {
+            if (pdfFiles.length < 2) return;
             
             // Show loading spinner
             spinner.style.display = 'block';
             resultsSection.style.display = 'none';
+            statusMessage.style.display = 'none';
+            mergeBtn.disabled = true;
             
-            // Simulate merge process (in a real app, you would use a PDF library)
-            setTimeout(() => {
+            try {
+                const { PDFDocument } = PDFLib;
+                
+                // Create a new PDF document
+                const mergedPdf = await PDFDocument.create();
+                
+                // Process each PDF
+                for (const pdfFile of pdfFiles) {
+                    try {
+                        const pdfDoc = await PDFDocument.load(pdfFile.arrayBuffer);
+                        const pages = await mergedPdf.copyPages(pdfDoc, pdfDoc.getPageIndices());
+                        pages.forEach(page => mergedPdf.addPage(page));
+                    } catch (err) {
+                        console.error('Error processing PDF:', err);
+                        showStatus(`Error processing ${pdfFile.name}`, 'error');
+                        return;
+                    }
+                }
+                
+                // Save the merged PDF
+                const mergedPdfBytes = await mergedPdf.save();
+                
+                // Create blob for download
+                mergedPdfBlob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+                
                 // Hide spinner and show results
                 spinner.style.display = 'none';
                 resultsSection.style.display = 'block';
+                showStatus('PDFs merged successfully!', 'success');
                 
                 // Scroll to results
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
-            }, 2000);
+                
+            } catch (err) {
+                console.error('Error merging PDFs:', err);
+                showStatus('Error merging PDFs', 'error');
+            } finally {
+                mergeBtn.disabled = false;
+            }
         }
         
         function downloadMergedPDF() {
-            // In a real implementation, this would download the actual merged PDF
-            alert('In a real implementation, this would download the merged PDF file.');
+            if (!mergedPdfBlob) return;
+            
+            const fileName = `merged-document-${new Date().toISOString().slice(0,10)}.pdf`;
+            download(mergedPdfBlob, fileName, 'application/pdf');
         }
         
         function formatFileSize(bytes) {
@@ -985,6 +1075,12 @@
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        function showStatus(message, type) {
+            statusMessage.textContent = message;
+            statusMessage.className = 'status ' + type;
+            statusMessage.style.display = 'block';
         }
         
         function toggleMobileMenu() {
@@ -1019,9 +1115,9 @@
                 const toIndex = parseInt(this.dataset.index);
                 
                 // Move file in array
-                const fileToMove = files[fromIndex];
-                files.splice(fromIndex, 1);
-                files.splice(toIndex, 0, fileToMove);
+                const fileToMove = pdfFiles[fromIndex];
+                pdfFiles.splice(fromIndex, 1);
+                pdfFiles.splice(toIndex, 0, fileToMove);
                 
                 // Re-render list
                 renderFileList();
